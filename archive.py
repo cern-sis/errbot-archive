@@ -1,12 +1,22 @@
+from itertools import chain
+
 from errbot import BotPlugin, arg_botcmd
+
+CONFIG_TEMPLATE = {
+    "ARCHIVE_STREAM": "_archive",
+}
 
 
 class Archive(BotPlugin):
-    @staticmethod
-    def get_configuration_template():
-        return {
-            "ARCHIVE_STREAM": "_archive",
-        }
+    def get_configuration_template(self):
+        return CONFIG_TEMPLATE
+
+    def configure(self, configuration):
+        if configuration is not None and configuration != {}:
+            config = dict(chain(CONFIG_TEMPLATE.items(), configuration.items()))
+        else:
+            config = CONFIG_TEMPLATE
+            super(Archive, self).configure(config)
 
     @arg_botcmd(
         "-s",
@@ -36,6 +46,26 @@ class Archive(BotPlugin):
             topic = self.current_topic(msg)
         self.archive_topic(stream, topic)
 
+    @arg_botcmd(
+        "-t",
+        "--topic",
+        type=str,
+        help="""
+        The topic to restore.
+        By default the topic in which the command is executed.
+        """,
+    )
+    def restore(self, msg, topic=None):
+        """
+        Restore a specific topic from the ARCHIVE_STREAM.
+        """
+        if topic is None:
+            topic = self.current_topic(msg)
+        self.restore_topic(topic)
+
+    def zulip_client(self):
+        return self._bot.client
+
     @staticmethod
     def current_stream(msg):
         return msg._from._room._id
@@ -46,10 +76,17 @@ class Archive(BotPlugin):
 
     def archive_topic(self, stream, topic):
         msg = self.get_last_message(stream, topic)
-        new_topic = f"{stream}/{topic}"
-        self.move_topic(msg["id"], self.config["ARCHIVE_STREAM"], new_topic)
+        self.move_topic(
+            msg["id"],
+            self.config["ARCHIVE_STREAM"],
+            self.archived_topic(stream, topic),
+        )
+
+    def archived_topic(self, stream, topic):
+        return f"✔ {stream}/{topic.replace('✔ ', '')}"
 
     def get_last_message(self, stream, topic):
+        client = self.zulip_client()
         request = {
             "anchor": "newest",
             "include_anchor": True,
@@ -60,11 +97,11 @@ class Archive(BotPlugin):
                 {"operator": "topic", "operand": topic},
             ],
         }
-        response = self._bot.client.get_messages(request)
+        response = client.get_messages(request)
         return response["messages"][0]
 
     def move_topic(self, msg_id, stream, topic):
-        client = self._bot.client
+        client = self.zulip_client()
         response = client.get_stream_id(stream)
         stream_id = response["stream_id"]
         request = {
@@ -75,3 +112,8 @@ class Archive(BotPlugin):
             "topic": topic,
         }
         client.update_message(request)
+
+    def restore_topic(self, topic):
+        msg = self.get_last_message(self.config["ARCHIVE_STREAM"], topic)
+        new_stream, new_topic = topic.replace("✔ ", "").split("/", 1)
+        self.move_topic(msg["id"], new_stream, new_topic)
