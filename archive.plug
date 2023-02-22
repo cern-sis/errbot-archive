@@ -1,0 +1,9 @@
+[Core]
+name = Archive
+module = archive
+
+[Documentation]
+description = Archive topics to a specific stream
+
+[Python]
+version = 3
